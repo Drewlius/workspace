@@ -113,9 +113,18 @@ export function createOrgSwitchController(deps) {
    * bootstrap failure, shows a toast and leaves the editor on whatever
    * it was showing — the sidenav-with-no-projects state still surfaces
    * the "+ New Project" CTA.
+   *
+   * Captures `orgSwitchSeq` at entry and rechecks it before every
+   * write-out (sidenav render, openPage). The handler's seq guard at
+   * `installHandler` only covers the fetchProjects-to-render gap; if
+   * a newer switch arrives while this function is awaiting bootstrap
+   * or its post-bootstrap fetch, the recheck stops the stale org's
+   * `openPage` from clobbering the user's newly-opened page.
    */
   async function navigateToOrgEntryPage(orgId) {
     if (!orgId) return;
+
+    const seq = orgSwitchSeq;
 
     let cached = deps.getCachedProjects();
     let targetPageId = pickTargetPageForOrg(orgId, cached);
@@ -128,11 +137,14 @@ export function createOrgSwitchController(deps) {
         deps.showToast("Couldn't set up that workspace — try creating a project.", "error");
         return;
       }
+      if (seq !== orgSwitchSeq) return;
       cached = await deps.fetchProjects();
+      if (seq !== orgSwitchSeq) return;
       deps.setCachedProjects(cached);
       deps.renderSidenav(cached, targetPageId);
     }
 
+    if (seq !== orgSwitchSeq) return;
     if (targetPageId && targetPageId !== deps.getCurrentPage()?.external_id) {
       await deps.openPage(targetPageId);
     }

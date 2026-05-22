@@ -213,6 +213,97 @@ describe("createOrgSwitchController — rapid switch race (orgSwitchSeq)", () =>
   });
 });
 
+describe("createOrgSwitchController — supersede during navigateToOrgEntryPage", () => {
+  beforeEach(() => {
+    mockState.handler = null;
+    localStorage.clear();
+  });
+
+  test("a switch superseded mid-bootstrap does not call openPage for the stale org", async () => {
+    // The handler's seq guard at installHandler only protects the
+    // fetchProjects-to-render hop. Once navigateToOrgEntryPage takes
+    // over, its own awaits (bootstrap, post-bootstrap fetch, openPage)
+    // can outlive a newer switch — and without an internal recheck the
+    // stale org's openPage clobbers whatever page the newer switch's
+    // pipeline (or a concurrent loadPage) just opened.
+    const createProjectDeferreds = [];
+    const createPageDeferreds = [];
+    // Returns A as empty so handler-1 falls into the bootstrap branch
+    // (the only branch with awaits before openPage). Returns B with
+    // pages so handler-2 finishes normally. The default buildController
+    // wires getCachedProjects to echo setCachedProjects, so handler-B's
+    // post-fetch write is what nav-B reads — overriding getCachedProjects
+    // here would force nav-B into the bootstrap path too and hang the
+    // test on an unresolved second deferred.
+    let fetchCallCount = 0;
+    const { controller, deps } = buildController({
+      fetchProjects: vi.fn(async () => {
+        fetchCallCount += 1;
+        if (fetchCallCount === 1) return []; // A's projects: empty
+        return [{ external_id: "proj-B", pages: [{ external_id: "page-B1" }] }];
+      }),
+      createProjectApi: vi.fn(() => {
+        const d = deferred();
+        createProjectDeferreds.push(d);
+        return d.promise;
+      }),
+      createPageApi: vi.fn(() => {
+        const d = deferred();
+        createPageDeferreds.push(d);
+        return d.promise;
+      }),
+    });
+    controller.installHandler();
+    expect(mockState.handler).toBeTypeOf("function");
+
+    // Start handler for org-A. It will fetchProjects (returning []),
+    // pass the handler-level seq guard, then enter navigateToOrgEntryPage
+    // and suspend inside bootstrapEmptyOrg awaiting createProjectApi.
+    const runA = mockState.handler("org-A");
+
+    // Flush microtasks until A is parked inside the bootstrap. A few
+    // ticks are needed: one for fetchProjects, one for the handler to
+    // re-enter, one for navigateToOrgEntryPage to reach createProjectApi.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(createProjectDeferreds).toHaveLength(1);
+
+    // While A is parked in bootstrap, fire a newer switch to B. This
+    // bumps orgSwitchSeq from 1 to 2.
+    const runB = mockState.handler("org-B");
+    for (let i = 0; i < 3; i++) await Promise.resolve();
+    await runB; // B's pipeline completes normally — opens page-B1.
+
+    // Now resolve A's bootstrap. Its captured seq (1) is stale (2 now),
+    // so each recheck inside navigateToOrgEntryPage should bail before
+    // touching the sidenav or calling openPage for A.
+    createProjectDeferreds[0].resolve({ external_id: "proj-A", pages: [] });
+    for (let i = 0; i < 3; i++) await Promise.resolve();
+    expect(createPageDeferreds).toHaveLength(1);
+    createPageDeferreds[0].resolve({ external_id: "page-A-untitled" });
+    await runA;
+
+    // openPage should have fired exactly once, for B's resume target.
+    // If the seq recheck were missing, A's bootstrapped page-A-untitled
+    // would also openPage and clobber the user's view of page-B1.
+    expect(deps.openPage).toHaveBeenCalledTimes(1);
+    expect(deps.openPage.mock.calls[0][0]).toBe("page-B1");
+
+    // fetchProjects: handler-A (1) + handler-B (1). The third call inside
+    // nav-A's post-bootstrap branch must be skipped by the recheck.
+    expect(deps.fetchProjects).toHaveBeenCalledTimes(2);
+
+    // setCachedProjects / renderSidenav: each fires once at the handler
+    // level for A (with the empty [] from A's fetch) and once for B.
+    // Nav-A's post-bootstrap write would have been a third — that's the
+    // one the recheck stops. The final state is B's render, not A's
+    // stale post-bootstrap render.
+    expect(deps.setCachedProjects).toHaveBeenCalledTimes(2);
+    expect(deps.renderSidenav).toHaveBeenCalledTimes(2);
+    const lastCachedCall = deps.setCachedProjects.mock.calls.at(-1)[0];
+    expect(lastCachedCall[0].external_id).toBe("proj-B");
+  });
+});
+
 describe("createOrgSwitchController — bootstrap coalescing (orgBootstrapInFlight)", () => {
   beforeEach(() => {
     mockState.handler = null;
