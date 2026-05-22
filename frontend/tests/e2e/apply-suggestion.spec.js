@@ -35,13 +35,23 @@ async function createPageWithContent(page, title, content) {
   const modal = page.locator(".modal");
   await modal.waitFor({ state: "visible", timeout: 5000 });
   await page.locator("#page-title-input").fill(title);
+
+  // Capture the URL before submit. After login, the SPA may already be on
+  // /pages/<oldId>/ (the homepage-redirect target). The post-submit waits
+  // (.sidebar-item.active, .cm-content, /pages/<id>/) all resolve on tick 0
+  // against that stale state, so a naive url() read returns <oldId>.
+  const urlBefore = page.url();
   await page.locator(".modal-btn-primary").click();
 
-  await page.waitForSelector(".sidebar-item.active", { timeout: 10000 });
-  await page.waitForSelector(".cm-content", { timeout: 10000 });
+  // Require BOTH "URL matches /pages/<id>/" AND "URL changed from urlBefore".
+  // The second clause prevents tick-0 resolution against a pre-create page URL.
+  await page.waitForFunction(
+    (prev) => /\/pages\/[A-Za-z0-9]+\//.test(location.pathname) && location.href !== prev,
+    urlBefore,
+    { timeout: 15000 }
+  );
 
-  // Extract page ID from URL: /pages/{external_id}/
-  await page.waitForURL(/\/pages\/[A-Za-z0-9]+\//, { timeout: 10000 });
+  await page.waitForSelector(".cm-content", { timeout: 10000 });
   const pageId = page.url().match(/\/pages\/([A-Za-z0-9]+)\//)?.[1] || "";
 
   // Insert content via ytext, the CRDT source of truth (exposed on window in
@@ -57,6 +67,12 @@ async function createPageWithContent(page, title, content) {
   }, content);
 
   await waitForEditorContent(page, content.substring(0, 30));
+
+  // Regression pin: the returned id must NOT be the id we were on at submit
+  // time. If the URL race ever re-emerges, this fires inside the helper
+  // instead of leaking into downstream assertions.
+  const idBefore = urlBefore.match(/\/pages\/([A-Za-z0-9]+)\//)?.[1] ?? "";
+  expect(pageId, "createPageWithContent returned a stale pageId").not.toBe(idBefore);
 
   return pageId;
 }
@@ -179,11 +195,7 @@ test.describe("Apply AI Suggestion", () => {
     console.log("Logged in");
 
     const content = "Some text for human comment testing.";
-    await createPageWithContent(page, `Human Comment ${Date.now()}`, content);
-
-    // Extract page ID from URL
-    await page.waitForURL(/\/pages\/[A-Za-z0-9]+\//, { timeout: 10000 });
-    const pageId2 = page.url().match(/\/pages\/([A-Za-z0-9]+)\//)?.[1] || "";
+    const pageId2 = await createPageWithContent(page, `Human Comment ${Date.now()}`, content);
     expect(pageId2).toBeTruthy();
 
     // Create a human comment via API
