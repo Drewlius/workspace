@@ -1,4 +1,7 @@
 from http import HTTPStatus
+from unittest.mock import patch
+
+from django.db import IntegrityError, transaction
 
 from core.tests.common import BaseAuthenticatedViewTestCase
 from pages.constants import ProjectEditorRole
@@ -259,6 +262,92 @@ class TestDailyNoteToday(DailyNoteTestBase):
 
         self.assertEqual(Folder.objects.filter(project=project, parent=None, name="2026").count(), 1)
         self.assertEqual(Page.objects.filter(project=project, title="2026-04-18").count(), 1)
+
+    def test_pre_existing_row_short_circuits_create(self):
+        """When a daily-note row already exists for (project, folder, title),
+        the endpoint must surface it without attempting another insert.
+        This pins the get-side of get_or_create, complementing the
+        IntegrityError fallback below."""
+        project = ProjectFactory(org=self.org, creator=self.user)
+        self._configure(project)
+
+        # Pre-create folders + the canonical row.
+        year_folder = Folder.objects.create(project=project, parent=None, name="2026")
+        month_folder = Folder.objects.create(project=project, parent=year_folder, name="04")
+        winner = Page.objects.create(
+            project=project,
+            creator=self.user,
+            folder=month_folder,
+            title="2026-04-18",
+            details={"content": "", "filetype": "md", "schema_version": 1},
+        )
+
+        response = self.send_api_request(url=TODAY_URL, method="post", data={"date": "2026-04-18"})
+
+        self.assertEqual(response.status_code, HTTPStatus.OK)
+        self.assertEqual(response.json()["external_id"], winner.external_id)
+        self.assertEqual(Page.objects.filter(project=project, folder=month_folder, title="2026-04-18").count(), 1)
+
+    def test_integrity_error_from_get_or_create_falls_back_to_get(self):
+        """Belt-and-suspenders fallback: if `get_or_create` bubbles up an
+        IntegrityError (e.g., a peer inserted between its inner GET and
+        INSERT, and its internal retry GET *also* missed due to read
+        isolation), our `except IntegrityError` must run a final GET and
+        return the existing row. Drives the IntegrityError branch
+        directly by patching get_or_create to raise."""
+        project = ProjectFactory(org=self.org, creator=self.user)
+        self._configure(project)
+
+        # Pre-create the row the fallback GET will find.
+        year_folder = Folder.objects.create(project=project, parent=None, name="2026")
+        month_folder = Folder.objects.create(project=project, parent=year_folder, name="04")
+        winner = Page.objects.create(
+            project=project,
+            creator=self.user,
+            folder=month_folder,
+            title="2026-04-18",
+            details={"content": "", "filetype": "md", "schema_version": 1},
+        )
+
+        with patch.object(Page.objects, "get_or_create", side_effect=IntegrityError("duplicate")):
+            response = self.send_api_request(url=TODAY_URL, method="post", data={"date": "2026-04-18"})
+
+        self.assertEqual(response.status_code, HTTPStatus.OK)
+        self.assertEqual(response.json()["external_id"], winner.external_id)
+
+    def test_constraint_blocks_duplicate_daily_note_at_db_level(self):
+        """End-to-end check: even bypassing `open_today_daily_note` and
+        attempting a raw `Page.objects.create` for the same daily-note
+        slot must raise `IntegrityError`. Pins the database-level guard
+        independently of the API code path."""
+        project = ProjectFactory(org=self.org, creator=self.user)
+        self._configure(project)
+
+        first = self.send_api_request(url=TODAY_URL, method="post", data={"date": "2026-04-18"})
+        self.assertEqual(first.status_code, HTTPStatus.OK)
+        page = Page.objects.get(external_id=first.json()["external_id"])
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Page.objects.create(
+                    project=project,
+                    creator=self.user,
+                    folder=page.folder,
+                    title="2026-04-18",
+                    details={"content": "", "filetype": "md", "schema_version": 1},
+                )
+
+    def test_creator_is_added_as_editor(self):
+        """The legacy code path used `create_with_owner`, which adds the
+        creator to `editors`. The get_or_create refactor must preserve that
+        Tier 3 editor membership for the created row."""
+        project = ProjectFactory(org=self.org, creator=self.user)
+        self._configure(project)
+
+        response = self.send_api_request(url=TODAY_URL, method="post", data={"date": "2026-04-18"})
+        self.assertEqual(response.status_code, HTTPStatus.OK)
+        page = Page.objects.get(external_id=response.json()["external_id"])
+        self.assertIn(self.user, page.editors.all())
 
     def test_honors_template_via_copy_from(self):
         project = ProjectFactory(org=self.org, creator=self.user)

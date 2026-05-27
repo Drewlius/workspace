@@ -210,6 +210,20 @@ class Page(TimeStampedModel):
                 opclasses=["gin_trgm_ops"],
             ),
         ]
+        constraints = [
+            # Daily-note guard: two concurrent POSTs to /daily-note/today/
+            # used to be able to insert two YYYY-MM-DD rows in the same
+            # (project, folder) before either could see the other. The
+            # row lock (select_for_update) didn't gap-lock the absent row.
+            # A partial unique index lets get_or_create() resolve the race
+            # via IntegrityError. Scoped to YYYY-MM-DD titles so legitimate
+            # duplicates (e.g. two "Untitled" pages) keep working.
+            models.UniqueConstraint(
+                fields=["project", "folder", "title"],
+                condition=Q(is_deleted=False, title__regex=r"^\d{4}-\d{2}-\d{2}$"),
+                name="page_daily_note_unique_active",
+            ),
+        ]
 
     def __str__(self):
         return self.title

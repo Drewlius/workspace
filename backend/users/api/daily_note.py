@@ -2,7 +2,7 @@ import re
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.http import HttpRequest
 from ninja import Query, Router, Schema
 
@@ -307,29 +307,41 @@ def open_today_daily_note(
 
     template = _resolve_daily_note_template(user, project, bucket)
 
-    # Atomic find-or-create with select_for_update to prevent duplicate daily
-    # notes from concurrent requests (double-click, multiple tabs/devices).
+    # Race-safe find-or-create. `select_for_update` on an absent row doesn't
+    # gap-lock in Postgres, so two concurrent POSTs (double-click, multi-tab,
+    # multi-device) could each pass the `.first() is None` check and insert
+    # a duplicate. The partial unique index on (project, folder, title)
+    # WHERE is_deleted=False AND title ~ '^YYYY-MM-DD$' turns the second
+    # insert into an IntegrityError, which get_or_create resolves by
+    # re-fetching the winner's row.
+    details = {"content": "", "filetype": "md", "schema_version": 1}
+    if template and template.details:
+        details["content"] = template.details.get("content", "")
+        details["filetype"] = template.details.get("filetype", "md")
+
     with transaction.atomic():
         _, month_folder = _get_or_create_year_month_folders(project, today.year, today.month)
 
-        page = (
-            Page.objects.select_for_update()
-            .filter(project=project, folder=month_folder, title=title, is_deleted=False)
-            .first()
-        )
-
-        if page is None:
-            details = {"content": "", "filetype": "md", "schema_version": 1}
-            if template and template.details:
-                details["content"] = template.details.get("content", "")
-                details["filetype"] = template.details.get("filetype", "md")
-            page = Page.objects.create_with_owner(
-                user=user,
+        try:
+            page, created = Page.objects.get_or_create(
                 project=project,
-                title=title,
-                details=details,
                 folder=month_folder,
+                title=title,
+                is_deleted=False,
+                defaults={"creator": user, "details": details},
             )
+        except IntegrityError:
+            # Belt-and-suspenders: get_or_create already catches IntegrityError
+            # internally, but a transient mid-second insert from a peer between
+            # the inner GET and INSERT could still surface here. One more GET
+            # is guaranteed to find the row at this point.
+            page = Page.objects.get(project=project, folder=month_folder, title=title, is_deleted=False)
+            created = False
+
+        if created:
+            # Mirror PageManager.create_with_owner: add the creator as an editor
+            # so the role-based permission tiers see them as a Tier 3 editor.
+            page.editors.add(user)
 
     return 200, {
         "external_id": page.external_id,
