@@ -126,3 +126,26 @@ test("fold chevrons sit cleanly in the margin without overlapping content", asyn
     expect(parseFloat(op)).toBeLessThan(0.01);
   }
 });
+
+test("page title left-aligns with the editor body text", async ({ page }) => {
+  // Regression: widening the fold gutter (24px -> 28px) and dropping its
+  // -8px margin pushed the body text right, but the title input kept its old
+  // 16px offset, so the title sat ~12px left of the body. The title's
+  // margin-left must track the fold gutter width.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await flexibleLogin(page);
+  await setupTestPage(page, FIXTURE, "Title Alignment");
+  await page.waitForTimeout(300);
+
+  const probe = await page.evaluate(() => {
+    const r = (el) => el.getBoundingClientRect();
+    const titleInput = document.querySelector("#note-title-input");
+    const content = document.querySelector(".cm-content");
+    return {
+      titleLeft: r(titleInput).left,
+      contentLeft: r(content).left,
+    };
+  });
+
+  expect(Math.abs(probe.titleLeft - probe.contentLeft)).toBeLessThanOrEqual(1);
+});
