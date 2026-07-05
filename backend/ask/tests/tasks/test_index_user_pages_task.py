@@ -227,7 +227,7 @@ class TestIndexUserPagesBulkCreatesAuditRows(TestCase):
         pages = [PageFactory(creator=user, title=f"Doc {i}", details={"content": f"Body {i}"}) for i in range(3)]
 
         with patch(
-            "ask.tasks.EmbeddingUsage.objects.bulk_create",
+            "ask.models.EmbeddingUsage.objects.bulk_create",
             wraps=EmbeddingUsage.objects.bulk_create,
         ) as mock_bulk:
             index_user_pages(user_id=user.id, page_external_ids=[p.external_id for p in pages])
@@ -269,8 +269,54 @@ class TestIndexUserPagesBulkCreatesAuditRows(TestCase):
         user = UserFactory()
         page = PageFactory(creator=user, title="Doc", details={"content": "Body"})
 
-        with patch("ask.tasks.EmbeddingUsage.objects.bulk_create") as mock_bulk:
+        with patch("ask.models.EmbeddingUsage.objects.bulk_create") as mock_bulk:
             index_user_pages(user_id=user.id, page_external_ids=[page.external_id])
 
         mock_bulk.assert_not_called()
         self.assertEqual(EmbeddingUsage.objects.count(), 0)
+
+    @patch("ask.helpers.embeddings.embedding")
+    def test_bulk_create_failure_falls_back_to_per_row_save(self, mock_litellm):
+        """If `bulk_create` raises (poisoned row, transient connection error),
+        the audit trail must still land — per-row `save()` runs as recovery so
+        an entire run's usage rows aren't dropped on a single bad batch."""
+        from ask.models import EmbeddingUsage
+
+        mock_litellm.side_effect = self._litellm_resp
+        user = UserFactory()
+        pages = [PageFactory(creator=user, title=f"Doc {i}", details={"content": f"Body {i}"}) for i in range(3)]
+
+        with patch(
+            "ask.models.EmbeddingUsage.objects.bulk_create",
+            side_effect=RuntimeError("simulated bulk failure"),
+        ):
+            index_user_pages(user_id=user.id, page_external_ids=[p.external_id for p in pages])
+
+        # All three rows must survive via the per-row fallback path.
+        self.assertEqual(EmbeddingUsage.objects.filter(kind="index").count(), 3)
+
+    @patch("ask.helpers.embeddings.embedding")
+    def test_bulk_create_failure_logs_with_exc_info_for_sentry_forwarding(self, mock_litellm):
+        """Sentry must see the original `bulk_create` exception so the rare
+        cases are visible in triage. Routing goes through `log_error(...,
+        exc_info=True)` — the default `LoggingIntegration` forwards ERROR-level
+        records to Sentry with the traceback attached. Recovery counts ride
+        along as structured `extra` fields."""
+        mock_litellm.side_effect = self._litellm_resp
+        user = UserFactory()
+        pages = [PageFactory(creator=user, title=f"Doc {i}", details={"content": f"Body {i}"}) for i in range(2)]
+
+        bulk_exc = RuntimeError("simulated bulk failure")
+        with patch(
+            "ask.models.EmbeddingUsage.objects.bulk_create",
+            side_effect=bulk_exc,
+        ), patch("ask.helpers.embeddings.log_error") as mock_log_error:
+            index_user_pages(user_id=user.id, page_external_ids=[p.external_id for p in pages])
+
+        mock_log_error.assert_called_once()
+        kwargs = mock_log_error.call_args.kwargs
+        self.assertTrue(kwargs.get("exc_info"))
+        extras = kwargs.get("extra") or {}
+        self.assertEqual(extras.get("buffer_size"), 2)
+        self.assertEqual(extras.get("recovered_via_per_row"), 2)
+        self.assertEqual(extras.get("per_row_failures"), 0)

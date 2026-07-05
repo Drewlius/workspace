@@ -45,7 +45,7 @@
 {% block docs_content %}
   <article class="oss-repo-page">
     <nav class="oss-breadcrumb">
-      <a href="{% url 'core:oss_index' %}">Open Source</a>
+      <a href="{% url 'core:oss_index' %}">Source Code</a>
       <span class="separator">/</span>
       <span>Workspace</span>
     </nav>
@@ -209,6 +209,28 @@ cp backend/.env-template backend/.env-docker
           If the AGPL doesn't work for you, for example because you need to keep your modifications
           private or your legal team won't touch AGPL code, we offer the same code under a
           <a href="https://github.com/hyperclast/workspace/blob/main/COMMERCIAL_LICENSE.md" target="_blank" rel="noopener">commercial license</a>.
+        </p>
+      </div>
+
+      <div class="faq-item-open" id="rugpull">
+        <a href="#rugpull" class="faq-anchor">#</a>
+        <h3>What happens if {{ brand_name }} disappears? Am I exposed to a rug pull?</h3>
+        <p>
+          The license already protects you here. The AGPL grants you the right to use, copy, modify,
+          and distribute the code, and that grant doesn't depend on us existing. If we vanished
+          tomorrow, your self-hosted instance keeps running, and you, or a community fork, can
+          keep patching and improving it indefinitely, the same way people keep using and patching
+          abandoned Apache or MIT-licensed projects. The only obligation is the AGPL's own: share
+          your modifications with the people you serve them to, and keep the license notices intact.
+        </p>
+        <p>
+          Relicensing can't reach backwards either: if a future version ever shipped under a worse
+          license, every version already released stays under the AGPL. You can stay on it or fork
+          from it.
+        </p>
+        <p>
+          And your data is never hostage. Pages are plain text, and you can pull everything out
+          through the <a href="{% url 'core:api_docs_index' %}">API</a> at any time.
         </p>
       </div>
 

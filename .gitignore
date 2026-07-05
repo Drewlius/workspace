@@ -43,6 +43,8 @@ dist-ssr
 .claude/settings.json
 CLAUDE.*.md
 
+AGENTS.*.md
+
 /frontend/playwright-report/
 /frontend/test-results/
 test-results/

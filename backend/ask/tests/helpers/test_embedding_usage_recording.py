@@ -13,6 +13,7 @@ from ask.helpers.embeddings import (
     _extract_usage_tokens,
     collect_embedding_usage,
     create_embedding,
+    flush_embedding_usage_buffer,
 )
 from ask.models import EmbeddingUsage
 from pages.tests.factories import PageFactory
@@ -377,3 +378,141 @@ class TestCollectEmbeddingUsageBuffer(TestCase):
         for row in rows:
             self.assertEqual(row.total_tokens, 5)
             self.assertIsNotNone(row.created)
+
+
+@override_settings(EMBEDDINGS_SERVER_API_KEY="sk-server")
+class TestFlushEmbeddingUsageBuffer(TestCase):
+    """`flush_embedding_usage_buffer` is the canonical entrypoint for draining
+    a `collect_embedding_usage()` buffer. It must keep audit rows landing even
+    when `bulk_create` fails (a poisoned row, mid-batch connection error)."""
+
+    def _build_buffer(self, count):
+        user = UserFactory()
+        return [
+            EmbeddingUsage(
+                user=user,
+                model="text-embedding-3-small",
+                prompt_tokens=1,
+                total_tokens=1,
+                cost_usd=Decimal("0"),
+                kind="index",
+                key_source="server",
+            )
+            for _ in range(count)
+        ]
+
+    def test_empty_buffer_is_a_noop(self):
+        """Calling with an empty list shouldn't hit the DB at all — avoids
+        a spurious INSERT-of-zero in the log stream."""
+        with patch("ask.models.EmbeddingUsage.objects.bulk_create") as mock_bulk:
+            flush_embedding_usage_buffer([])
+        mock_bulk.assert_not_called()
+
+    def test_happy_path_uses_bulk_create(self):
+        buffer = self._build_buffer(3)
+
+        flush_embedding_usage_buffer(buffer)
+
+        self.assertEqual(EmbeddingUsage.objects.count(), 3)
+
+    def test_bulk_create_failure_falls_back_to_per_row_save(self):
+        """If bulk_create raises, per-row save() runs so an entire batch
+        isn't dropped on the floor."""
+        buffer = self._build_buffer(3)
+
+        with patch(
+            "ask.models.EmbeddingUsage.objects.bulk_create",
+            side_effect=RuntimeError("simulated bulk failure"),
+        ):
+            flush_embedding_usage_buffer(buffer)
+
+        self.assertEqual(EmbeddingUsage.objects.count(), 3)
+
+    def test_bulk_create_failure_logs_recovered_and_failed_counts(self):
+        """Operations triage relies on the counts in the log line — verify
+        they show up so a partial recovery is distinguishable from a total loss."""
+        buffer = self._build_buffer(3)
+
+        with patch(
+            "ask.models.EmbeddingUsage.objects.bulk_create",
+            side_effect=RuntimeError("simulated bulk failure"),
+        ), patch("ask.helpers.embeddings.log_error") as mock_log_error:
+            flush_embedding_usage_buffer(buffer)
+
+        mock_log_error.assert_called_once()
+        args = mock_log_error.call_args.args
+        # The log format includes (exc_type, buffer_size, recovered, failed, exc).
+        self.assertIn("RuntimeError", args)
+        self.assertIn(3, args)  # buffer_size
+        self.assertIn(3, args)  # recovered count (all three saved)
+
+    def test_per_row_failures_count_separately_from_recoveries(self):
+        """If bulk_create AND some per-row saves fail, the still-good rows
+        must land and the failure count must reflect only the truly-lost rows."""
+        buffer = self._build_buffer(3)
+        original_save = EmbeddingUsage.save
+        call_count = {"n": 0}
+
+        def _flaky_save(self, *args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                raise RuntimeError("row 2 is poisoned")
+            return original_save(self, *args, **kwargs)
+
+        with patch(
+            "ask.models.EmbeddingUsage.objects.bulk_create",
+            side_effect=RuntimeError("simulated bulk failure"),
+        ), patch.object(EmbeddingUsage, "save", _flaky_save), patch(
+            "ask.helpers.embeddings.log_error"
+        ) as mock_log_error:
+            flush_embedding_usage_buffer(buffer)
+
+        # Two rows survived per-row recovery, one stayed lost.
+        self.assertEqual(EmbeddingUsage.objects.count(), 2)
+        args = mock_log_error.call_args.args
+        self.assertIn(2, args)  # recovered
+        self.assertIn(1, args)  # per-row failed
+
+    def test_bulk_create_failure_logs_with_exc_info_for_sentry_forwarding(self):
+        """Sentry attribution is routed through the standard `log_error(...,
+        exc_info=True)` helper — the default `LoggingIntegration` forwards
+        ERROR-level records to Sentry with the traceback attached. Recovery
+        counts ride along as structured `extra` fields so they show up in the
+        Sentry event alongside the formatted message."""
+        buffer = self._build_buffer(2)
+        bulk_exc = RuntimeError("simulated bulk failure")
+
+        with patch(
+            "ask.models.EmbeddingUsage.objects.bulk_create",
+            side_effect=bulk_exc,
+        ), patch("ask.helpers.embeddings.log_error") as mock_log_error:
+            flush_embedding_usage_buffer(buffer)
+
+        mock_log_error.assert_called_once()
+        kwargs = mock_log_error.call_args.kwargs
+        self.assertTrue(kwargs.get("exc_info"))
+        self.assertEqual(
+            kwargs.get("extra"),
+            {
+                "buffer_size": 2,
+                "recovered_via_per_row": 2,
+                "per_row_failures": 0,
+            },
+        )
+
+    def test_sentry_reporting_failure_does_not_mask_per_row_recovery(self):
+        """If Sentry itself blows up (network/init issue), the per-row work
+        that already ran must still be visible in the DB — observability
+        glitches must never destroy audit data."""
+        buffer = self._build_buffer(2)
+
+        with patch(
+            "ask.models.EmbeddingUsage.objects.bulk_create",
+            side_effect=RuntimeError("simulated bulk failure"),
+        ), patch(
+            "sentry_sdk.push_scope",
+            side_effect=RuntimeError("sentry transport down"),
+        ):
+            flush_embedding_usage_buffer(buffer)
+
+        self.assertEqual(EmbeddingUsage.objects.count(), 2)

@@ -23,7 +23,7 @@ def collect_embedding_usage():
     """Defer per-call EmbeddingUsage writes; yield a list of unsaved instances.
 
     The caller is responsible for flushing the buffer (typically via
-    `EmbeddingUsage.objects.bulk_create(buffer)`). On exit the contextvar is
+    `flush_embedding_usage_buffer(buffer)`). On exit the contextvar is
     reset so subsequent calls outside the block resume per-call writes.
     """
     buffer: list = []
@@ -32,6 +32,79 @@ def collect_embedding_usage():
         yield buffer
     finally:
         _usage_buffer_var.reset(token)
+
+
+def flush_embedding_usage_buffer(buffer) -> None:
+    """Persist a buffer of unsaved `EmbeddingUsage` rows produced by
+    `collect_embedding_usage`.
+
+    Tries `bulk_create` first (one round-trip). If that raises (a poisoned
+    row, a stale FK, a transient connection error mid-batch), falls back to
+    per-row `save()` so a single bad row can't drop the entire run's audit
+    trail, and reports the original failure with recovered/still-failed
+    counts so the rare cases stay visible in triage. Sentry receives the
+    event via the default `LoggingIntegration` (ERROR-level logs become
+    Sentry events), so we don't reach for `sentry_sdk` directly.
+
+    Returns nothing; failures here are observability-only and never propagate.
+    """
+    if not buffer:
+        return
+
+    from ask.models import EmbeddingUsage
+
+    try:
+        EmbeddingUsage.objects.bulk_create(buffer)
+    except Exception as bulk_exc:
+        recovered, failed = _save_rows_individually(buffer)
+        _report_bulk_create_failure(
+            bulk_exc,
+            buffer_size=len(buffer),
+            recovered=recovered,
+            failed=failed,
+        )
+
+
+def _save_rows_individually(rows) -> Tuple[int, int]:
+    """Save each row in turn and return `(recovered, failed)` counts.
+
+    Used as the per-row fallback after a `bulk_create` failure so a single
+    poisoned row can't drop the entire batch. Per-row exceptions are
+    swallowed and counted; the caller decides how to report the totals.
+    """
+    recovered = 0
+    failed = 0
+    for row in rows:
+        try:
+            row.save()
+            recovered += 1
+        except Exception:
+            failed += 1
+    return recovered, failed
+
+
+def _report_bulk_create_failure(exc, *, buffer_size: int, recovered: int, failed: int) -> None:
+    """Log the `bulk_create` failure with traceback.
+
+    `log_error(..., exc_info=True)` is the codebase's canonical way to surface
+    an exception to Sentry — `sentry_sdk.init(...)` wires up `LoggingIntegration`
+    so any ERROR-level record becomes a Sentry event with the traceback
+    attached. Recovery counts ride along as structured `extra` fields.
+    """
+    log_error(
+        "Bulk EmbeddingUsage flush failed (%s, %d rows); recovered %d via per-row save, %d still failed: %s",
+        type(exc).__name__,
+        buffer_size,
+        recovered,
+        failed,
+        exc,
+        exc_info=True,
+        extra={
+            "buffer_size": buffer_size,
+            "recovered_via_per_row": recovered,
+            "per_row_failures": failed,
+        },
+    )
 
 
 RETRY_ERROR_TYPES = (

@@ -129,9 +129,9 @@ def oss_index(request):
     """Render the OSS landing page."""
     context = {
         "is_oss_index": True,
-        "page_title": "Open Source",
-        "seo_title": "Open Source - Hyperclast",
-        "seo_description": "Hyperclast is fully open source. Self-host on your infrastructure, fork the codebase, or contribute. No vendor lock-in.",
+        "page_title": "Source Code",
+        "seo_title": "Source Code - Hyperclast",
+        "seo_description": "Hyperclast is open source (AGPL-3.0). Self-host on your infrastructure, fork the codebase, or contribute. No vendor lock-in.",
         **_get_dev_context(request),
     }
     return render(request, "core/docs/oss_index.html", context)
@@ -151,9 +151,9 @@ def oss_repo(request, repo_name):
 
     context = {
         "repo_name": repo_name,
-        "page_title": f"Open Source - {repo_name.title()}",
-        "seo_title": f"{repo_name.title()} - Hyperclast Open Source",
-        "seo_description": seo_descriptions.get(repo_name, f"Hyperclast {repo_name.title()} open source repository."),
+        "page_title": f"Source Code - {repo_name.title()}",
+        "seo_title": f"{repo_name.title()} - Hyperclast Source Code",
+        "seo_description": seo_descriptions.get(repo_name, f"Hyperclast {repo_name.title()} source repository."),
         **_get_dev_context(request),
     }
     return render(request, f"core/docs/oss_{repo_name}.html", context)
