@@ -8,10 +8,10 @@
 #           Video recording is not supported here (its bundled ffmpeg is glibc);
 #           run specs with PLAYWRIGHT_NO_VIDEO=1 to disable it.
 #
-# Base image is PINNED to alpine3.21: the latest node:20-alpine tracks a newer
+# Base image is PINNED to alpine3.21: the latest node:22-alpine tracks a newer
 # Alpine whose chromium (149.x) crashes on launch (crashpad "--database is
 # required" -> SIGTRAP). alpine3.21 ships chromium 136, which launches cleanly
 # and is close enough to Playwright's bundled Chromium for the e2e suite.
-FROM node:20-alpine3.21
+FROM node:22-alpine3.21
 
 RUN apk add --no-cache su-exec chromium

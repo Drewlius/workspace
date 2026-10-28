@@ -261,23 +261,19 @@
     color: var(--text-primary);
   }
 
-  :root.dark .move-folder-item:hover:not(:disabled),
-  [data-theme="dark"] .move-folder-item:hover:not(:disabled) {
+  :root.dark .move-folder-item:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.06);
   }
 
-  :root.dark .move-folder-item.current,
-  [data-theme="dark"] .move-folder-item.current {
+  :root.dark .move-folder-item.current {
     background: rgba(255, 255, 255, 0.04);
   }
 
-  :root.dark .move-folder-item.selected,
-  [data-theme="dark"] .move-folder-item.selected {
+  :root.dark .move-folder-item.selected {
     background: rgba(255, 255, 255, 0.08);
   }
 
-  :root.dark .move-create-folder-btn:hover,
-  [data-theme="dark"] .move-create-folder-btn:hover {
+  :root.dark .move-create-folder-btn:hover {
     background: rgba(255, 255, 255, 0.04);
   }
 </style>

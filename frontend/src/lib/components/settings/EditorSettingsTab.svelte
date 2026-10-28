@@ -143,10 +143,18 @@
           </div>
         </div>
       {:else}
-        <button
-          type="button"
+        <div
           class="shortcut-row shortcut-row-clickable"
+          role="button"
+          tabindex="0"
           onclick={() => startEditing(shortcut.id)}
+          onkeydown={(e) => {
+            if (e.target !== e.currentTarget) return;
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              startEditing(shortcut.id);
+            }
+          }}
         >
           <div class="shortcut-label">{shortcut.label}</div>
           <div class="shortcut-key-container">
@@ -164,7 +172,7 @@
               </button>
             {/if}
           </div>
-        </button>
+        </div>
       {/if}
     {/each}
   </div>
@@ -202,6 +210,11 @@
   .shortcut-row-clickable:hover {
     border-color: #667eea;
     background: var(--bg-tertiary, #fafafa);
+  }
+
+  .shortcut-row-clickable:focus-visible {
+    outline: 2px solid #667eea;
+    outline-offset: 2px;
   }
 
   .shortcut-row-clickable:hover .shortcut-key {

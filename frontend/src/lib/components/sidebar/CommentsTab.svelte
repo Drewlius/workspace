@@ -1348,15 +1348,6 @@
     gap: 0.375rem;
   }
 
-  .comment-link {
-    color: var(--accent, #0969da);
-    text-decoration: underline;
-  }
-
-  .comment-link:hover {
-    text-decoration: none;
-  }
-
   .comments-rewind-notice {
     display: flex;
     flex-direction: column;

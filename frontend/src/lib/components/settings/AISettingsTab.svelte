@@ -506,14 +506,6 @@
     color: var(--text-primary);
   }
 
-  .provider-summary-type {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-    background: var(--bg-tertiary);
-    padding: 0.2rem 0.5rem;
-    border-radius: 4px;
-    text-transform: capitalize;
-  }
 
   .status-badge {
     font-size: 0.75rem;
