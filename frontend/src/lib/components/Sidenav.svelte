@@ -7,7 +7,7 @@
   import { broadcastSidenavChanged } from "../sidenavBroadcast.js";
   import { validateProjectName } from "../validation.js";
   import { isDemoMode } from "../../demo/index.js";
-  import { getDemoPage } from "../../demo/demoContent.js";
+  import { getEffectiveDemoPage } from "../../demo/demoApi.js";
   import {
     getProjects,
     getActivePageId,
@@ -290,7 +290,7 @@
     e.stopPropagation();
     closeAllMenus();
     if (isDemoMode()) {
-      const page = getDemoPage(pageId);
+      const page = getEffectiveDemoPage(pageId);
       if (page) {
         const content = page.details?.content || "";
         const filename = `${page.title || "untitled"}.md`;
@@ -324,7 +324,7 @@
     // Get page content for the modal (needed for CSV detection)
     let pageContent = "";
     if (isDemoMode()) {
-      const demoPage = getDemoPage(pageId);
+      const demoPage = getEffectiveDemoPage(pageId);
       pageContent = demoPage?.details?.content || "";
     }
     changePageType({

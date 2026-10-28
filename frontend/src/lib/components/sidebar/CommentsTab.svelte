@@ -17,7 +17,8 @@
     generateCommentEdit as apiGenerateCommentEdit,
     toggleReaction as apiToggleReaction,
   } from "../../../api.js";
-  import { isDemoMode } from "../../../demo/index.js";
+  import { isDemoMode, DemoModeError, showDemoPrompt } from "../../../demo/index.js";
+  import { classifyCommentActionError } from "../../utils/commentActionError.js";
   import {
     fetchComments as demoFetchComments,
     createComment as demoCreateComment,
@@ -51,6 +52,15 @@
       : { fetchComments: apiFetchComments, createComment: apiCreateComment, deleteComment: apiDeleteComment, resolveComment: apiResolveComment, unresolveComment: apiUnresolveComment, triggerAIReview: apiTriggerAIReview, createRewindCheckpoint: apiCreateRewindCheckpoint, generateCommentEdit: apiGenerateCommentEdit, toggleReaction: apiToggleReaction };
   }
 
+  // Demo mutations throw DemoModeError — show the signup prompt, not an error toast.
+  function handleDemoError(e) {
+    if (e instanceof DemoModeError) {
+      showDemoPrompt(e.message);
+      return true;
+    }
+    return false;
+  }
+
   let comments = $state([]);
   let currentPageId = $state(null);
   let currentPageRole = $state(null); // "admin", "editor", "viewer", or null
@@ -71,6 +81,7 @@
       const updatedReactions = await toggleReaction(currentPageId, commentExternalId, emoji);
       comments = comments.map((c) => updateReactionsDeep(c, commentExternalId, updatedReactions));
     } catch (e) {
+      if (handleDemoError(e)) return;
       console.error("Error toggling reaction:", e);
       showToast("Couldn't toggle reaction", "error");
     }
@@ -219,6 +230,7 @@
       showNewComment = false;
       await loadComments();
     } catch (e) {
+      if (handleDemoError(e)) return;
       console.error("Error creating page comment:", e);
       showToast("Couldn't post your comment at this time.", "error");
     }
@@ -238,6 +250,7 @@
 
       await loadComments();
     } catch (e) {
+      if (handleDemoError(e)) return;
       console.error("Error creating reply:", e);
       showToast("Couldn't post your reply at this time.", "error");
     }
@@ -259,6 +272,7 @@
       await deleteComment(currentPageId, commentId);
       await loadComments();
     } catch (e) {
+      if (handleDemoError(e)) return;
       console.error("Error deleting comment:", e);
       showToast("Couldn't delete the comment at this time.", "error");
     }
@@ -294,6 +308,7 @@
       await resolveComment(currentPageId, commentId);
       await loadComments();
     } catch (e) {
+      if (handleDemoError(e)) return;
       console.error("Error resolving comment:", e);
       if (e.status === 403) {
         showToast("You need edit access to resolve discussions.", "error");
@@ -310,6 +325,7 @@
       await unresolveComment(currentPageId, commentId);
       await loadComments();
     } catch (e) {
+      if (handleDemoError(e)) return;
       console.error("Error unresolving comment:", e);
       if (e.status === 403) {
         showToast("You need edit access to unresolve discussions.", "error");
@@ -344,13 +360,20 @@
       showToast(`${personaName} is reviewing your ${scope}...`);
       // Comments will arrive via WebSocket commentsUpdated event
     } catch (e) {
-      console.error("Error triggering AI review:", e);
-      if (e.code === "ai_key_not_configured") {
-        showToast("No AI provider configured. Add an API key in Settings.", "error", {
-          action: { label: "Settings", onClick: () => { window.location.href = "/settings#ai"; } },
-        });
+      // Demo mutations throw DemoModeError by design — surface the signup
+      // prompt without logging an error for the expected gated action.
+      const outcome = classifyCommentActionError(e);
+      if (outcome.kind === "demo") {
+        showDemoPrompt(outcome.message);
       } else {
-        showToast("Couldn't start AI review at this time.", "error");
+        console.error("Error triggering AI review:", e);
+        if (outcome.kind === "ai_key") {
+          showToast("No AI provider configured. Add an API key in Settings.", "error", {
+            action: { label: "Settings", onClick: () => { window.location.href = "/settings#ai"; } },
+          });
+        } else {
+          showToast("Couldn't start AI review at this time.", "error");
+        }
       }
       _inflight.delete(persona);
       pendingPersonas = new Set([...pendingPersonas].filter(p => p !== persona));
@@ -468,13 +491,20 @@
           : `Applied ${personaName}'s suggestion`,
       );
     } catch (e) {
-      console.error("Error applying AI suggestion:", e);
-      if (e.code === "ai_key_not_configured") {
-        showToast("No AI provider configured. Add an API key in Settings.", "error", {
-          action: { label: "Settings", onClick: () => { window.location.href = "/settings#ai"; } },
-        });
+      // Demo mutations throw DemoModeError by design — surface the signup
+      // prompt without logging an error for the expected gated action.
+      const outcome = classifyCommentActionError(e);
+      if (outcome.kind === "demo") {
+        showDemoPrompt(outcome.message);
       } else {
-        showToast("Failed to apply suggestion");
+        console.error("Error applying AI suggestion:", e);
+        if (outcome.kind === "ai_key") {
+          showToast("No AI provider configured. Add an API key in Settings.", "error", {
+            action: { label: "Settings", onClick: () => { window.location.href = "/settings#ai"; } },
+          });
+        } else {
+          showToast("Failed to apply suggestion");
+        }
       }
     }
 
@@ -791,6 +821,17 @@
   {:else if loading}
     <div class="comments-loading">Loading...</div>
   {:else}
+    {#if isDemoMode()}
+      <div class="comments-demo-note">
+        <p class="comments-demo-note-title">This is the Discuss tab</p>
+        <p>
+          Comment threads anchored to the text — plus four AI reviewers:
+          <strong>Socrates</strong> asks hard questions, <strong>Einstein</strong> spots insights,
+          <strong>Dewey</strong> brings references, and <strong>Athena</strong> pushes for decisions.
+        </p>
+        <p>The threads seeded in this demo are examples. Select text in the editor to start your own.</p>
+      </div>
+    {/if}
     <div class="comments-ai-triggers">
       {#each Object.entries(PERSONAS) as [key, persona]}
         <button class="ai-trigger-btn" class:ai-trigger-pending={pendingPersonas.has(key)} title="{persona.name}: {hasEditorSelection ? 'Review selection' : persona.subtitle}" disabled={pendingPersonas.has(key)} onclick={() => handleTriggerAIReview(key)}>
@@ -821,7 +862,7 @@
     {#if comments.length === 0}
       <div class="comments-empty">
         <p class="comments-empty-text">No discussions yet</p>
-        <p class="comments-empty-hint">Select text in the editor to start a discussion</p>
+        <p class="comments-empty-hint">Select text in the editor to start a discussion, or ask an AI reviewer above to take a pass at the page</p>
       </div>
     {:else if getVisibleComments().length === 0}
       <div class="comments-empty">
@@ -968,6 +1009,29 @@
     font-size: 0.75rem;
     color: var(--text-tertiary, #aaa);
     margin: 0;
+  }
+
+  .comments-demo-note {
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border-light, #e0e0e0);
+    border-radius: 8px;
+    background: var(--bg-surface, #f7f7f8);
+    font-size: 0.75rem;
+    line-height: 1.45;
+    color: var(--text-secondary, #666);
+  }
+
+  .comments-demo-note p {
+    margin: 0 0 0.4rem;
+  }
+
+  .comments-demo-note p:last-child {
+    margin-bottom: 0;
+  }
+
+  .comments-demo-note-title {
+    font-weight: 600;
+    color: var(--text-primary, #333);
   }
 
   .comments-list {

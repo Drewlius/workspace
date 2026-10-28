@@ -5,8 +5,22 @@
  * Hides the live editor (doesn't destroy it) to preserve collaboration state.
  */
 
-import { fetchRewindList, fetchRewindDetail } from "../api.js";
+import {
+  fetchRewindList as apiFetchRewindList,
+  fetchRewindDetail as apiFetchRewindDetail,
+} from "../api.js";
+import {
+  fetchRewindList as demoFetchRewindList,
+  fetchRewindDetail as demoFetchRewindDetail,
+} from "../demo/demoApi.js";
+import { isDemoMode } from "../demo/index.js";
 import { registerTabHandler, registerPageChangeHandler } from "../lib/stores/sidebar.svelte.js";
+
+function getApi() {
+  return isDemoMode()
+    ? { fetchRewindList: demoFetchRewindList, fetchRewindDetail: demoFetchRewindDetail }
+    : { fetchRewindList: apiFetchRewindList, fetchRewindDetail: apiFetchRewindDetail };
+}
 
 // Module state
 let entries = [];
@@ -65,7 +79,7 @@ async function loadEntries() {
   notify();
 
   try {
-    const data = await fetchRewindList(currentPageId);
+    const data = await getApi().fetchRewindList(currentPageId);
     entries = data.items || [];
     totalCount = data.count || 0;
   } catch (e) {
@@ -88,7 +102,7 @@ export async function loadMore() {
   notify();
 
   try {
-    const data = await fetchRewindList(currentPageId, 50, entries.length);
+    const data = await getApi().fetchRewindList(currentPageId, 50, entries.length);
     entries = [...entries, ...(data.items || [])];
     totalCount = data.count || 0;
   } catch (e) {
@@ -129,6 +143,7 @@ async function doSelectEntry(entry) {
     const prevEntry = idx >= 0 && idx < entries.length - 1 ? entries[idx + 1] : null;
 
     // Fetch selected detail (and previous detail in parallel if available)
+    const { fetchRewindDetail } = getApi();
     const fetches = [fetchRewindDetail(currentPageId, entry.external_id)];
     if (prevEntry) {
       fetches.push(fetchRewindDetail(currentPageId, prevEntry.external_id));

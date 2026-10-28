@@ -6,6 +6,7 @@
 import { csrfFetch } from "./csrf.js";
 import { getAppConfig } from "./config.js";
 import { getCurrentOrgId } from "./lib/orgContext.js";
+import { isDemoMode } from "./demo/index.js";
 
 const API_BASE = "/api/v1";
 
@@ -83,6 +84,8 @@ export async function fetchOrgs() {
  *   normally consume the body. Errors are logged, not thrown.
  */
 export async function patchCurrentOrg(orgId) {
+  // Demo mode has no Profile to sync — skip the (unauthenticated) PATCH.
+  if (isDemoMode()) return null;
   try {
     return await csrfFetch(`${API_BASE}/users/me/`, {
       method: "PATCH",
@@ -105,6 +108,8 @@ export async function patchCurrentOrg(orgId) {
  */
 export async function patchOrgLastPage(orgId, pageId) {
   if (!orgId) return null;
+  // Demo mode has no UserOrgState to sync — skip the (unauthenticated) PATCH.
+  if (isDemoMode()) return null;
   try {
     return await csrfFetch(`${API_BASE}/users/me/org-state/${orgId}/`, {
       method: "PATCH",

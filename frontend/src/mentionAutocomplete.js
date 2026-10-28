@@ -1,6 +1,8 @@
 import { csrfFetch } from "./csrf.js";
 import { createDebouncedFetcher } from "./debouncedFetch.js";
 import { getCurrentOrgId } from "./lib/orgContext.js";
+import { isDemoMode } from "./demo/index.js";
+import { fetchOrgMembersAutocomplete as fetchDemoMembers } from "./demo/demoApi.js";
 
 const API_BASE = "/api";
 
@@ -54,31 +56,36 @@ async function mentionCompletionSource(context) {
     return null;
   }
 
-  const orgId = getCurrentOrgId();
-  console.log("[Mention] orgId:", orgId);
-  if (!orgId) {
-    return null;
-  }
-
   const query = mentionContext.query;
 
-  // Reset cache if org changed
-  if (orgId !== lastOrgId) {
-    fetcher.reset();
-    lastOrgId = orgId;
-  }
-
   let members;
-  try {
-    members = await fetcher.fetch(query, async () => {
-      console.log("[Mention] Fetching members for org:", orgId, "query:", query);
-      const result = await fetchOrgMembers(orgId, query);
-      console.log("[Mention] Fetched members:", result);
-      return result;
-    });
-  } catch (e) {
-    console.error("[Mention] Error fetching org members:", e);
-    return null;
+  if (isDemoMode()) {
+    // Demo mode: the fictional team, no org or network involved
+    members = await fetchDemoMembers(query);
+  } else {
+    const orgId = getCurrentOrgId();
+    console.log("[Mention] orgId:", orgId);
+    if (!orgId) {
+      return null;
+    }
+
+    // Reset cache if org changed
+    if (orgId !== lastOrgId) {
+      fetcher.reset();
+      lastOrgId = orgId;
+    }
+
+    try {
+      members = await fetcher.fetch(query, async () => {
+        console.log("[Mention] Fetching members for org:", orgId, "query:", query);
+        const result = await fetchOrgMembers(orgId, query);
+        console.log("[Mention] Fetched members:", result);
+        return result;
+      });
+    } catch (e) {
+      console.error("[Mention] Error fetching org members:", e);
+      return null;
+    }
   }
 
   if (!members || members.length === 0) {

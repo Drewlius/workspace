@@ -396,6 +396,17 @@
     <p class="missing-key-text">
       Ask questions, get summaries, and brainstorm ideas.
     </p>
+    <div class="demo-ask-example">
+      <div class="demo-ask-example-q">Why did checkout fail during the March drop?</div>
+      <div class="demo-ask-example-a">
+        Shipping rates were recomputed on every checkout with no cache or timeout, so the
+        14× traffic spike exhausted the connection pool
+        <span class="demo-ask-cite">Postmortem: Drop-Day Outage</span>.
+        It was fixed with a 10-minute rate cache and a 2-second timeout with a flat-rate
+        fallback <span class="demo-ask-cite">Postmortem: Drop-Day Outage</span>.
+      </div>
+      <div class="demo-ask-example-note">Example — Ask answers from your pages, with citations.</div>
+    </div>
     <a href="/signup/" class="missing-key-btn demo-signup-btn">
       Sign up to enable
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -753,5 +764,44 @@
   .demo-signup-btn:hover {
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+  }
+
+  .demo-ask-example {
+    margin: 0.25rem 0 0.75rem;
+    padding: 0.75rem;
+    text-align: left;
+    border: 1px solid var(--border-light, #e5e5e5);
+    border-radius: 10px;
+    background: var(--bg-primary, #fff);
+    font-size: 0.8125rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .demo-ask-example-q {
+    font-weight: 600;
+    color: var(--text-primary, #333);
+  }
+
+  .demo-ask-example-a {
+    color: var(--text-secondary, #555);
+    line-height: 1.55;
+  }
+
+  .demo-ask-cite {
+    display: inline-block;
+    font-size: 0.6875rem;
+    padding: 0 0.35em;
+    border-radius: 4px;
+    background: var(--bg-elevated, #f2f2f2);
+    color: var(--text-secondary, #666);
+    white-space: nowrap;
+  }
+
+  .demo-ask-example-note {
+    font-size: 0.6875rem;
+    color: var(--text-tertiary, #999);
+    font-style: italic;
   }
 </style>

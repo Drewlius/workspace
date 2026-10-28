@@ -49,6 +49,8 @@ AGENTS.*.md
 /frontend/test-results/
 test-results/
 
+frontend/core
+
 # Deployment tracking (local state)
 /deployment/.last-deployed-*
 /.claude/

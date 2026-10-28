@@ -6,6 +6,7 @@
 import * as Y from "yjs";
 import { setCommentHighlights, setActiveComment } from "./decorateComments.js";
 import { updateComment } from "./api.js";
+import { isDemoMode } from "./demo/index.js";
 
 /**
  * Resolve a base64-encoded Yjs RelativePosition to an absolute index.
@@ -101,8 +102,10 @@ export function resolveCommentAnchors(comments, pageExternalId, view, ydoc, ytex
         from = match.from;
         to = match.to;
 
-        // Deferred resolution: create RelativePositions and PATCH back
-        if (!comment.anchor_from_b64 && !comment.anchor_to_b64 && ytext) {
+        // Deferred resolution: create RelativePositions and PATCH back.
+        // Skipped in demo mode — seed comments are anchor_text-only by design,
+        // and the PATCH would hit the real API as an anonymous user.
+        if (!comment.anchor_from_b64 && !comment.anchor_to_b64 && ytext && !isDemoMode()) {
           try {
             const { fromB64, toB64 } = createRelativePositions(from, to, ytext);
             // Fire-and-forget PATCH — don't block rendering

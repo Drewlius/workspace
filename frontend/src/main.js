@@ -15,12 +15,18 @@ import {
   patchOrgLastPage,
   uploadFile,
 } from "./api.js";
-import { isDemoMode, showDemoPrompt } from "./demo/index.js";
+import {
+  isDemoMode,
+  showDemoPrompt,
+  setDemoContent,
+  setDemoTitle,
+  DEMO_CONTENT_MAX_CHARS,
+} from "./demo/index.js";
 import {
   fetchProjectsWithPages as fetchDemoProjects,
   fetchPage as fetchDemoPage,
+  getEffectiveDemoPage,
 } from "./demo/demoApi.js";
-import { getDemoPage } from "./demo/demoContent.js";
 import { metrics } from "./lib/metrics.js";
 import { getSession, logout } from "./auth.js";
 import { clickToEndPlugin } from "./clickToEndPlugin.js";
@@ -646,8 +652,9 @@ async function updatePageTitle(external_id, newTitle) {
     }
   }
 
-  // In demo mode, skip API call - changes are local only
+  // In demo mode, skip API call - persist the title locally instead
   if (isDemoMode()) {
+    setDemoTitle(external_id, newTitle);
     return true;
   }
 
@@ -1736,6 +1743,28 @@ function initializeEditor(pageContent = "", additionalExtensions = [], filetype 
     }
   });
 
+  // Demo mode: persist edits to localStorage (debounced) so a reload keeps them.
+  // The full doc.toString() is acceptable here only because demo docs are small
+  // and this extension is never included outside demo mode.
+  let demoSaveTimer = null;
+  const demoEditPersistence = !isDemoMode()
+    ? []
+    : [
+        EditorView.updateListener.of((update) => {
+          if (!update.docChanged) return;
+          // Over the persistence cap (e.g. the generated stress-test page):
+          // skip early so we never pay the O(n) toString for nothing.
+          if (update.state.doc.length > DEMO_CONTENT_MAX_CHARS) return;
+          const pageId = currentPage?.external_id;
+          if (!pageId) return;
+          if (demoSaveTimer) clearTimeout(demoSaveTimer);
+          demoSaveTimer = setTimeout(() => {
+            setDemoContent(pageId, update.state.doc.toString());
+            demoSaveTimer = null;
+          }, 500);
+        }),
+      ];
+
   const enterKeyTrigger = keymap.of([
     {
       key: "Enter",
@@ -1813,6 +1842,7 @@ function initializeEditor(pageContent = "", additionalExtensions = [], filetype 
     keymap.of([indentWithTab]),
     clickToEndPlugin,
     contentChangeNotifier,
+    ...demoEditPersistence,
     enterKeyTrigger,
   ];
 
@@ -2353,7 +2383,7 @@ function setupNoteActions() {
       // In demo mode, get content from demo data source
       let pageContent = currentPage.details?.content || "";
       if (isDemoMode()) {
-        const demoPage = getDemoPage(currentPage.external_id);
+        const demoPage = getEffectiveDemoPage(currentPage.external_id);
         pageContent = demoPage?.details?.content || "";
       }
       changePageType({
@@ -2443,7 +2473,7 @@ function setupNoteActions() {
       // In demo mode, get content from demo data source
       let pageContent = currentPage.details?.content || "";
       if (isDemoMode()) {
-        const demoPage = getDemoPage(currentPage.external_id);
+        const demoPage = getEffectiveDemoPage(currentPage.external_id);
         pageContent = demoPage?.details?.content || "";
       }
       changePageType({
@@ -2861,6 +2891,11 @@ async function startApp() {
     setupSidebar();
     setupSidebarPanelToggle();
     setupNavEdgeToggles();
+    // The Rewind tab renders whenever the flag is on — wire the module in
+    // demo too, or the tab sits dead ("Open a page to view its history").
+    if (getFeatureFlags().rewind) {
+      setupRewind();
+    }
     setupDemoPresence();
 
     const sidenavNavigate = (externalId) => {

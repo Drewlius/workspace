@@ -1,0 +1,17 @@
+# Dev frontend container: node + chromium.
+#
+# su-exec: the compose command starts as root to fix named-volume ownership,
+#          then drops to the host user (see ws-frontend in docker-compose.yaml).
+# chromium: Alpine (musl) build for running Playwright e2e specs inside the
+#           container — the Playwright-bundled glibc Chromium can't run here.
+#           Wire it via PLAYWRIGHT_LAUNCH_OPTIONS (see frontend/playwright.config.js).
+#           Video recording is not supported here (its bundled ffmpeg is glibc);
+#           run specs with PLAYWRIGHT_NO_VIDEO=1 to disable it.
+#
+# Base image is PINNED to alpine3.21: the latest node:20-alpine tracks a newer
+# Alpine whose chromium (149.x) crashes on launch (crashpad "--database is
+# required" -> SIGTRAP). alpine3.21 ships chromium 136, which launches cleanly
+# and is close enough to Playwright's bundled Chromium for the e2e suite.
+FROM node:20-alpine3.21
+
+RUN apk add --no-cache su-exec chromium

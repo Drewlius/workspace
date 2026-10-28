@@ -5,8 +5,24 @@
  * instead of making network requests.
  */
 
-import { DEMO_PROJECTS, DEMO_PAGES, DEMO_COMMENTS, getDemoPage } from "./demoContent.js";
-import { DemoModeError, getDemoFiletype } from "./index.js";
+import {
+  DEMO_PROJECTS,
+  DEMO_PAGES,
+  DEMO_COMMENTS,
+  DEMO_REWINDS,
+  DEMO_MEMBERS,
+  getDemoPage,
+  STRESS_PAGE_ID,
+} from "./demoContent.js";
+import { DemoModeError, getDemoFiletype, getDemoContent, getDemoTitle } from "./index.js";
+
+/**
+ * Title with any local edit applied (titles are editable in demo).
+ */
+function effectiveTitle(page) {
+  const stored = getDemoTitle(page.external_id);
+  return stored !== null ? stored : page.title;
+}
 
 /**
  * Fetch projects with pages - returns demo project structure
@@ -14,7 +30,10 @@ import { DemoModeError, getDemoFiletype } from "./index.js";
 export async function fetchProjectsWithPages() {
   // Small delay to feel realistic
   await new Promise((resolve) => setTimeout(resolve, 50));
-  return DEMO_PROJECTS;
+  return DEMO_PROJECTS.map((project) => ({
+    ...project,
+    pages: project.pages.map((page) => ({ ...page, title: effectiveTitle(page) })),
+  }));
 }
 
 /**
@@ -22,25 +41,43 @@ export async function fetchProjectsWithPages() {
  */
 export async function fetchPage(externalId) {
   await new Promise((resolve) => setTimeout(resolve, 30));
-  const page = getDemoPage(externalId);
+  const page = getEffectiveDemoPage(externalId);
   if (!page) {
     throw new Error(`Demo page not found: ${externalId}`);
+  }
+  return page;
+}
+
+/**
+ * A demo page with all local edits applied (title, content, filetype).
+ * Synchronous — for call sites that read demo state outside the API shape.
+ */
+export function getEffectiveDemoPage(externalId) {
+  const page = getDemoPage(externalId);
+  if (!page) return null;
+
+  let result = { ...page, title: effectiveTitle(page) };
+
+  // Locally edited content (persisted to localStorage on edit)
+  const storedContent = getDemoContent(externalId);
+  if (storedContent !== null) {
+    result = {
+      ...result,
+      details: { ...result.details, content: storedContent },
+    };
   }
 
   // Check for filetype override (from Change Page Type in demo mode)
   const filetypeOverride = getDemoFiletype(externalId);
   if (filetypeOverride) {
-    return {
-      ...page,
+    result = {
+      ...result,
       filetype: filetypeOverride,
-      details: {
-        ...page.details,
-        filetype: filetypeOverride,
-      },
+      details: { ...result.details, filetype: filetypeOverride },
     };
   }
 
-  return page;
+  return result;
 }
 
 /**
@@ -111,10 +148,11 @@ export async function autocompletePages(query) {
 
   for (const project of DEMO_PROJECTS) {
     for (const page of project.pages) {
-      if (page.title.toLowerCase().includes(q)) {
+      const title = effectiveTitle(page);
+      if (title.toLowerCase().includes(q)) {
         results.push({
           external_id: page.external_id,
-          title: page.title,
+          title,
           project_name: project.name,
         });
       }
@@ -122,6 +160,15 @@ export async function autocompletePages(query) {
   }
 
   return results;
+}
+
+/**
+ * Org members autocomplete - the fictional Peregrine team
+ */
+export async function fetchOrgMembersAutocomplete(query) {
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const q = (query || "").toLowerCase();
+  return DEMO_MEMBERS.filter((m) => m.username.toLowerCase().includes(q));
 }
 
 /**
@@ -178,41 +225,59 @@ function extractLinksFromContent(content, sourcePageId) {
 }
 
 /**
+ * Extract outgoing links from a page's content and resolve their titles.
+ */
+function resolveOutgoingLinks(content, pageId) {
+  return extractLinksFromContent(content, pageId).map((link) => {
+    const targetPage = getDemoPage(link.external_id);
+    return {
+      external_id: link.external_id,
+      title: targetPage ? effectiveTitle(targetPage) : link.link_text,
+      link_text: link.link_text,
+    };
+  });
+}
+
+/**
  * Fetch page links - returns outgoing and incoming (backlinks) for a demo page
  */
 export async function fetchPageLinks(pageId) {
   await new Promise((resolve) => setTimeout(resolve, 30));
 
-  const currentPage = getDemoPage(pageId);
-  if (!currentPage) {
-    return { outgoing: [], incoming: [] };
+  // Outgoing links from the current page.
+  let outgoing = [];
+  if (pageId === STRESS_PAGE_ID) {
+    // The stress-test page is generated (~5 MB) on read, so never materialize
+    // its seed body. It has no seed links, but a visitor could shrink it under
+    // the persistence cap and add one — honor that stored edit if present.
+    const storedContent = getDemoContent(STRESS_PAGE_ID);
+    if (storedContent !== null) {
+      outgoing = resolveOutgoingLinks(storedContent, pageId);
+    }
+  } else {
+    // Read the current page with local edits applied so the outgoing links
+    // match what the user actually sees in the editor after editing.
+    const currentPage = getEffectiveDemoPage(pageId);
+    if (!currentPage) {
+      return { outgoing: [], incoming: [] };
+    }
+    outgoing = resolveOutgoingLinks(currentPage.details?.content || "", pageId);
   }
 
-  // Get outgoing links from current page
-  const content = currentPage.details?.content || "";
-  const outgoingRaw = extractLinksFromContent(content, pageId);
-
-  // Resolve titles for outgoing links
-  const outgoing = outgoingRaw.map((link) => {
-    const targetPage = getDemoPage(link.external_id);
-    return {
-      external_id: link.external_id,
-      title: targetPage?.title || link.link_text,
-      link_text: link.link_text,
-    };
-  });
-
-  // Find backlinks - scan all demo pages for links TO this page
+  // Find backlinks - scan all demo pages for links TO this page, using each
+  // source's locally edited content when present so added/removed links show.
   const incoming = [];
   for (const [sourceId, sourcePage] of Object.entries(DEMO_PAGES)) {
     if (sourceId === pageId) continue;
-    const sourceContent = sourcePage.details?.content || "";
+    const storedContent = getDemoContent(sourceId);
+    const sourceContent =
+      storedContent !== null ? storedContent : sourcePage.details?.content || "";
     const linksInSource = extractLinksFromContent(sourceContent, sourceId);
     for (const link of linksInSource) {
       if (link.external_id === pageId) {
         incoming.push({
           external_id: sourceId,
-          title: sourcePage.title,
+          title: effectiveTitle(sourcePage),
           link_text: link.link_text,
         });
       }
@@ -306,6 +371,28 @@ export async function triggerAIReview(_pageId, _persona, _selectionText) {
  */
 export async function toggleReaction(_pageId, _commentId, _emoji) {
   throw new DemoModeError("add reactions");
+}
+
+/**
+ * Fetch rewind history - returns canned entries (without content, like the list API)
+ */
+export async function fetchRewindList(pageId, limit = 50, offset = 0) {
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const all = DEMO_REWINDS[pageId] || [];
+  const items = all.slice(offset, offset + limit).map(({ content: _content, ...entry }) => entry);
+  return { items, count: all.length };
+}
+
+/**
+ * Fetch rewind detail - returns the canned entry including content
+ */
+export async function fetchRewindDetail(pageId, rewindId) {
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const entry = (DEMO_REWINDS[pageId] || []).find((e) => e.external_id === rewindId);
+  if (!entry) {
+    throw new Error(`Demo rewind not found: ${rewindId}`);
+  }
+  return entry;
 }
 
 /**

@@ -36,7 +36,9 @@ services:
       - ws-net
 
   ws-frontend:
-    image: node:20-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile-frontend
     working_dir: /app
     environment:
       HOME: /tmp
@@ -46,9 +48,9 @@ services:
       # Cache node_modules for faster builds
       - frontend-node-modules:/app/node_modules
     # Start as root to fix named-volume ownership, then drop to host user
+    # (su-exec and chromium are baked into the image — see Dockerfile-frontend)
     command: >-
       sh -c "
-        apk add --no-cache su-exec &&
         mkdir -p /tmp/.npm &&
         chown -R ${WS_DOCKER_UID:-1000}:${WS_DOCKER_GID:-1000} /tmp/.npm &&
         chown ${WS_DOCKER_UID:-1000}:${WS_DOCKER_GID:-1000} /app/node_modules &&

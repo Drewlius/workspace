@@ -12,6 +12,7 @@ import * as Y from "yjs";
 import { StateField, StateEffect } from "@codemirror/state";
 import { showTooltip, Decoration, EditorView, ViewPlugin, keymap } from "@codemirror/view";
 import { createComment } from "./api.js";
+import { isDemoMode, showDemoPrompt } from "./demo/index.js";
 import { isPdfPage } from "./pdf/isPdfPage.js";
 
 // --- Effects ---
@@ -144,6 +145,11 @@ function createFormTooltip(view) {
 
     const pageId = window.getCurrentPage?.()?.external_id;
     if (!pageId) return;
+
+    if (isDemoMode()) {
+      showDemoPrompt("add comments");
+      return;
+    }
 
     submitBtn.disabled = true;
     submitBtn.textContent = "...";

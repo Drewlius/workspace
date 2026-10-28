@@ -20,7 +20,7 @@ DEMO_PAGES = [
         "demo_id": "demo-welcome",
         "title": "Welcome to Hyperclast",
         "filetype": "md",
-        "content": """A fast, focused workspace for people who think in text. Try editing this page—your changes stay local until you sign up.
+        "content": """A fast, focused workspace for people who think in text. Try editing this page—everything saves automatically.
 
 ## Try It Out
 - [ ] Click this checkbox
@@ -44,8 +44,8 @@ Check out the other pages in the sidebar:
 - [Internal Links](/pages/demo-links/) — connect your ideas
 - [Sections & Tasks](/pages/demo-sections/) — organize with foldable sections
 
-## Ready to Save Your Work?
-Sign up to sync across devices and collaborate with your team.
+## Next Steps
+Create your own page with the **+** button in the sidebar, or invite teammates from the project menu to collaborate in real time.
 """,
     },
     {
